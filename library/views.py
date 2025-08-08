@@ -1,10 +1,11 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from .models import Author, Book, Member, Loan
-from .serializers import AuthorSerializer, BookSerializer, MemberSerializer, LoanSerializer
+from .serializers import AuthorSerializer, BookSerializer, MemberSerializer, LoanSerializer, AdditionalDaysSerializer
 from rest_framework.decorators import action
 from django.utils import timezone
 from .tasks import send_loan_notification
+from datetime import timedelta
 
 class AuthorViewSet(viewsets.ModelViewSet):
     queryset = Author.objects.all()
@@ -13,6 +14,9 @@ class AuthorViewSet(viewsets.ModelViewSet):
 class BookViewSet(viewsets.ModelViewSet):
     queryset = Book.objects.all()
     serializer_class = BookSerializer
+    
+    def get_queryset(self):
+        return super().get_queryset().select_related("author")
 
     @action(detail=True, methods=['post'])
     def loan(self, request, pk=None):
@@ -49,6 +53,27 @@ class MemberViewSet(viewsets.ModelViewSet):
     queryset = Member.objects.all()
     serializer_class = MemberSerializer
 
+
+    @action(detail=False, methods=['get'])
+    def top_five_members_with_active_loans(self, request):
+        pass
+        
+
 class LoanViewSet(viewsets.ModelViewSet):
     queryset = Loan.objects.all()
     serializer_class = LoanSerializer
+
+    @action(detail=True, methods=['post'])
+    def extend_due_date(self, request):
+        loan = self.get_object()
+        if loan.is_over_due:
+            return Response({'error': 'This loan is already overdue'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        additional_days = request.data.get('additional_days')
+        if not additional_days or not isinstance(additional_days, int):
+            return Response({'error': 'additional_days field must be a positive integer'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        loan.due_date = loan.due_date + timedelta(days=additional_days)
+        loan.save(update_fields=["due_date"])
+        return Response(LoanSerializer(loan).data)
+
